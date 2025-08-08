@@ -5,3 +5,4 @@ requests
 seaborn
 selenium
 sklearn
+numpy
