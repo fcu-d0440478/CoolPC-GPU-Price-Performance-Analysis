@@ -12,7 +12,7 @@ cursor.execute(
     CREATE TABLE IF NOT EXISTS gpus (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
-        score TEXT NOT NULL
+        score INTEGER NOT NULL
     )
 """
 )
@@ -47,7 +47,7 @@ for index, row in enumerate(rows, start=1):
         score_element = driver.find_element(By.XPATH, score_xpath)
 
         gpu_name = name_element.text.strip()
-        gpu_score = score_element.text.strip()
+        gpu_score = int(score_element.text.strip().replace(",", ""))
 
         print(f"{index}: {gpu_name} - {gpu_score}")
 

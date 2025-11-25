@@ -17,15 +17,20 @@
 
 ### 🧹 二、數據清理
 
-在 Phase 3，我們完成以下清理流程：
+在資料前處理階段，我們完成以下清理流程：
 
-- 移除無效分類（如轉接盒、周邊配件等非顯卡產品）
-- 建立 `pure_chipset` 欄位，將原始產品型號標準化
-- 對應 GPU 跑分資料，補上每張顯卡的效能分數 `score`
-- 新增 `CP` 欄位（score / price），用以衡量性價比
-- 移除 `pure_chipset` 為空值的資料，保證分析資料有效
+- **gpus.db 前處理**：去除重複的 GPU 名稱，保留最高分數的記錄（134 個型號）
+- **vga.db 處理**（不修改原始資料庫）：
+  - 使用 AI 生成的對照表（`3 gpu_mapping_checklist.json`）建立 `pure_chipset` 欄位
+  - 從 `gpus.db` 匹配效能分數 `score`（整數型態）
+  - 計算 `CP` 欄位（score / price），用以衡量性價比
+- **過濾無效資料**：
+  - 移除配件、轉接盒、專業繪圖卡等非消費級顯卡
+  - 過濾促銷活動產品（贈品、合購、紅包等）
+  - 移除 `pure_chipset` 或 `score` 為空值的資料
+- **產出乾淨資料庫**：`filtered_df.db`（保持 `vga.db` 原始資料不變）
 
-✅ 最終清理後，共保留 **69,132 筆有效顯卡紀錄**。
+✅ 最終清理後，共保留 **72,217 筆有效顯卡紀錄**。
 
 ---
 
@@ -147,80 +152,120 @@ python "2 gpu_scraper_ul.py"
 
 ---
 
-## 3) `3 gpu_mapping_checklist.json`
+## 3) `3 gpu_mapping_checklist.json` 與產生工具
 
 **用途：**  
-**名稱對照表**（多對一）：把原價屋頁面的「系列／標題」字串（如：`NVIDIA RTX3060-12G`）對應到 UL 分數表裡的**標準顯卡名稱**（如：`NVIDIA GeForce RTX 3060`）。此映射表檔案由 AI 智能匹配產生。
+**名稱對照表**（多對一）：把原價屋頁面的「chipset」字串（如：`NVIDIA RTX3060-12G`）對應到 UL 分數表裡的**標準顯卡名稱**（如：`NVIDIA GeForce RTX 3060`）。
+
+**產生方式：**
+
+1. **`3.1 generate_chatgpt_prompt.py`**：產生可直接貼到 ChatGPT 的 prompt 檔案
+
+   ```bash
+   python "3.1 generate_chatgpt_prompt.py"
+   # 產出 3.1 chatgpt_prompt.txt，複製內容貼到 ChatGPT
+   ```
 
 **匹配統計：**
 
-- 總共 139 個 chipset
-- 成功匹配 124 個（89.2%）
-- 未匹配的 15 個主要為周邊配件或資料庫中沒有的舊型號
+- 總共 124 個 chipset
+- 成功匹配約 73 個（59%）
+- 未匹配的主要為周邊配件、專業繪圖卡或資料庫中沒有的型號
 
-對不上或不需要的條目可為 `null`（略過）。
+對不上或不需要的條目設為 `null`（會在後續過濾掉）。
 
 **不用執行，是供下一步程式讀取的設定檔。**
 
 ---
 
-## 4) `4 mapping.py`
+## 4) `4 pre_process_data.ipynb`
 
-**用途：**  
-把 `vga.db` 與 `gpus.db` 接起來，完成**對齊與計算 CP 值**。
+**用途（資料前處理，建議在 Jupyter 內執行）：**
 
-**流程：**
+**重要：此流程不修改 `vga.db` 原始資料，所有處理都在記憶體中完成，最後產出新的 `filtered_df.db`**
 
-1. 讀入 `gpu_mapping_checklist.json`。
-2. 對 `vga` 表**新增欄位**：`pure_chipset`（對齊後的標準名稱）、`score`（效能分數）、`CP`（性價比，score/price）。
-3. 以對照表把 `vga.chipset → pure_chipset` 填上正規化名稱。
-4. 從 `gpus.db` 載入（`name, score`），把分數寫回 `vga.score`（以 `pure_chipset` 對應到 `name`）。
-5. 計算 `CP = score / price`（僅在兩者都有效且 `price != 0` 時）。
+**處理流程：**
 
-**第三步執行，更新：** `vga.db`（新增並填好 `pure_chipset / score / CP`）
+1. **gpus.db 前處理**：
+
+   - 將 score 轉為整數型態（Int64）
+   - 去除重複的 GPU 名稱，保留最高分數的記錄
+   - 更新 gpus.db（134 個型號）
+
+2. **載入 GPU mapping**：
+
+   - 讀取 `3 gpu_mapping_checklist.json` 對照表
+
+3. **從 vga.db 讀取並處理**（不修改原始資料庫）：
+
+   - 讀取所有 vga 資料到記憶體（101,558 筆）
+   - 新增 `pure_chipset` 欄位（使用 mapping 對照）
+   - 新增 `score` 欄位（整數型態，從 gpus.db 對應）
+   - 計算 `CP` 值（score / price）
+
+4. **過濾資料**：
+
+   - 排除配件、轉接盒、專業繪圖卡（chipset 關鍵字過濾）
+   - 排除促銷活動產品（product 關鍵字過濾：贈品、合購、紅包等）
+   - 移除 `pure_chipset` 或 `score` 為空值的資料
+
+5. **儲存到 filtered_df.db**：
+   - 按 CP 值降序排序
+   - 產出乾淨資料（72,217 筆）
+
+**第四步執行，產出：** `filtered_df.db`（保持 `vga.db` 原始資料不變）
 
 **執行範例：**
 
 ```bash
-python "4 mapping.py"
+jupyter lab
+# 開啟 5 pre_process_data.ipynb 並執行所有 cell
 ```
 
-> ✅ 到這裡為止，你已經擁有：
->
-> - `vga.db`：含 date/chipset/product/price + pure_chipset/score/CP
-> - `gpus.db`：含 name/score
-
 ---
 
-## 5) `5 pre_process_data.ipynb`
-
-**用途（資料前處理，建議在 Jupyter 內執行）：**
-
-- **gpus.db 前處理**：去除重複的 GPU 名稱，保留最高分數的記錄
-- **vga.db 前處理**：
-  - 使用 `3 gpu_mapping_checklist.json` 對照表，將 chipset 對應到標準的 `pure_chipset`
-  - 從 `gpus.db` 匹配效能分數（score）
-  - 計算 CP 值（score / price）
-  - **移除 `pure_chipset` 為空值的資料**，確保所有資料都有對應的效能分數
-- 輸出**乾淨版資料表** `filtered_df.db`（僅包含有效的顯卡資料）
-
-**第四步執行，產出：** 乾淨資料 `filtered_df.db`
-
----
-
-## 6) `6 data_analyze.ipynb`
+## 5) `5 data_analyze.ipynb`
 
 **用途（探索性資料分析/視覺化）：**
 
-- 從 `filtered_df.db` 讀取乾淨資料，進行 **EDA**：
-  - 描述性統計分析（價格、分數、CP 值的分布）
-  - CP 值最高的 Top 10 顯卡排名
-  - 時間序列趨勢分析（價格與效能的變化）
-  - 視覺化圖表：熱點圖、聚類分析、趨勢圖等
-- 產出圖表與初步結論，匯出至 `Image/` 資料夾
-- 輸出 `Top CP VGA data.csv`（最新日期的 CP 值排名）
+從 `filtered_df.db` 讀取乾淨資料（72,217 筆），進行完整的 **EDA**：
 
-**第五步執行，產出：** 分析圖表（PNG）、CSV 報告
+**分析項目：**
+
+1. **描述性統計分析**：
+
+   - 價格、分數、CP 值的分布統計
+   - 平均值、中位數、標準差等指標
+
+2. **CP 值排名分析**：
+
+   - 最新日期的 Top 10 高 CP 值顯卡
+   - 最低 CP 值顯卡（識別離群值）
+   - 輸出 `Top CP VGA data.csv`
+
+3. **視覺化圖表**：
+
+   - Top 10 CP 值長條圖
+   - 價格 vs 分數熱點圖（含密度標註）
+   - 時間序列趨勢圖（價格、分數、CP 值）
+   - KMeans 聚類分析（4 群，含代表顯卡標註）
+
+4. **時間序列分析**：
+   - 跨日平均價格與效能趨勢
+   - CP 值變化趨勢
+   - 市場動態洞察
+
+**第五步執行，產出：**
+
+- 分析圖表（儲存至 `Image/` 資料夾）
+- `Top CP VGA data.csv`（最新日期完整排名）
+
+**執行範例：**
+
+```bash
+jupyter lab
+# 開啟 6 data_analyze.ipynb 並執行所有 cell
+```
 
 ---
 
@@ -245,12 +290,23 @@ python "1 wayback_vga_tracker.py"
 # 2) 取得效能分數
 python "2 gpu_scraper_ul.py"
 
-# 3) 對齊 + 計算 CP 值
-python "4 mapping.py"
+# 3) 產生 GPU mapping 對照表（三選一）
+# 方法 A: 使用 ChatGPT
+python "3.1 generate_chatgpt_prompt.py"
+# 複製 3.1 chatgpt_prompt.txt 內容到 ChatGPT，將回應存為 3 gpu_mapping_checklist.json
 
-# 4) Jupyter 進行前處理與分析
-# (在 notebook 裡開啟並依指示逐步執行)
-# jupyter lab
-# 開啟「5 pre_process_data.ipynb」→ 產出乾淨資料
-# 開啟「6 data_analyze.ipynb」→ 做 EDA 與圖表
+# 4) 資料前處理（產出 filtered_df.db）
+# 方法 A: 使用 Jupyter Notebook（推薦）
+jupyter lab
+# 開啟「4 pre_process_data.ipynb」並執行所有 cell
+
+# 5) 探索性資料分析
+jupyter lab
+# 開啟「5 data_analyze.ipynb」並執行所有 cell
 ```
+
+**資料庫檔案說明：**
+
+- `vga.db`：原始價格資料（保持不變）
+- `gpus.db`：GPU 效能分數（會更新去重）
+- `filtered_df.db`：乾淨的分析資料（由步驟 4 產生）
